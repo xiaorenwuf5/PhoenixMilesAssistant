@@ -82,9 +82,16 @@ final class AirportCatalog {
         String normalized = normalize(text);
         List<Hit> hits = new ArrayList<>();
         for (Map.Entry<String, String> entry : ALIASES.entrySet()) {
-            int index = normalized.indexOf(entry.getKey());
-            if (index >= 0) {
-                hits.add(new Hit(index, entry.getKey().length(), AIRPORTS.get(entry.getValue())));
+            String alias = entry.getKey();
+            if (alias.isEmpty()) {
+                continue;
+            }
+
+            int from = 0;
+            int index;
+            while ((index = normalized.indexOf(alias, from)) >= 0) {
+                hits.add(new Hit(index, alias.length(), AIRPORTS.get(entry.getValue())));
+                from = index + alias.length();
             }
         }
         addFuzzyHits(normalized, hits);
@@ -109,16 +116,23 @@ final class AirportCatalog {
     static String normalize(String value) {
         return value == null ? "" : value
                 .toUpperCase(Locale.US)
-                .replace(" ", "")
-                .replace("\t", "")
-                .replace("　", "")
-                .replace("\n", "")
-                .replace("\r", "")
+                .replaceAll("[\\s\\u00A0\\u2007\\u202F\\u200B\\u200C\\u200D]+", "")
                 .replace("T1", "")
                 .replace("T2", "")
                 .replace("T3", "")
+                .replace("Ｔ１", "")
+                .replace("Ｔ２", "")
+                .replace("Ｔ３", "")
                 .replace("航站楼", "")
-                .replace("机场", "机场");
+                .replace("機場", "机场")
+                .replace("机杨", "机场")
+                .replace("机扬", "机场")
+                .replace("机埸", "机场")
+                .replace("机坊", "机场")
+                .replace("首部", "首都")
+                .replace("苜都", "首都")
+                .replace("酋都", "首都")
+                .replace("首郡", "首都");
     }
 
     private static void add(Airport airport, String... aliases) {
@@ -156,7 +170,7 @@ final class AirportCatalog {
 
     private static int fuzzyBeijingCapitalIndex(String normalized) {
         int direct = firstIndexOfAny(normalized,
-                "首都国际", "首都机场", "首都机杨", "首都机扬", "首都机", "北京首都", "PEK");
+                "首都国际", "首都机场", "首都机", "北京首都", "PEK");
         if (direct >= 0) {
             return direct;
         }
