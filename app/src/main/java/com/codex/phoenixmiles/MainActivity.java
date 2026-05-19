@@ -28,6 +28,8 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -69,8 +71,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_PICK_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            processImage(data.getData());
+        if (requestCode == REQUEST_PICK_IMAGE && resultCode == RESULT_OK && data != null) {
+            processImages(extractImageUris(data));
         }
     }
 
@@ -93,7 +95,7 @@ public class MainActivity extends Activity {
         root.addView(subtitle);
 
         LinearLayout actionRow = row();
-        Button pickButton = primaryButton("选择截图");
+        Button pickButton = primaryButton("选择截图（可多选）");
         pickButton.setOnClickListener(v -> chooseImage());
         actionRow.addView(pickButton, weightParams());
 
@@ -201,10 +203,17 @@ public class MainActivity extends Activity {
 
         String action = intent.getAction();
         String type = intent.getType();
+        if (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null && type.startsWith("image/")) {
+            processImages(extractImageUris(intent));
+            return;
+        }
+
         if (Intent.ACTION_SEND.equals(action) && type != null && type.startsWith("image/")) {
             Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
             if (uri != null) {
-                processImage(uri);
+                List<Uri> uris = new ArrayList<>();
+                uris.add(uri);
+                processImages(uris);
             }
             return;
         }
@@ -231,33 +240,115 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        startActivityForResult(Intent.createChooser(intent, "选择阿里商旅截图"), REQUEST_PICK_IMAGE);
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        startActivityForResult(Intent.createChooser(intent, "选择一张或多张阿里商旅截图"), REQUEST_PICK_IMAGE);
     }
 
-    private void processImage(Uri uri) {
+    private List<Uri> extractImageUris(Intent data) {
+        List<Uri> uris = new ArrayList<>();
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                Uri uri = clipData.getItemAt(i).getUri();
+                if (uri != null) {
+                    uris.add(uri);
+                }
+            }
+        }
+
+        Uri uri = data.getData();
+        if (uri != null && !containsUri(uris, uri)) {
+            uris.add(uri);
+        }
+
+        ArrayList<Uri> sharedUris = data.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+        if (sharedUris != null) {
+            for (Uri sharedUri : sharedUris) {
+                if (sharedUri != null && !containsUri(uris, sharedUri)) {
+                    uris.add(sharedUri);
+                }
+            }
+        }
+        return uris;
+    }
+
+    private boolean containsUri(List<Uri> uris, Uri uri) {
+        for (Uri item : uris) {
+            if (item.equals(uri)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void processImages(List<Uri> uris) {
+        if (uris == null || uris.isEmpty()) {
+            Toast.makeText(this, "没有选择可识别的图片", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        currentImageUri = uris.get(0);
+        imagePreview.setImageURI(currentImageUri);
+        imagePreview.setVisibility(View.VISIBLE);
+        imagePreview.setContentDescription(previewHint(uris.size()));
+        imageHintText.setText(previewHint(uris.size()));
+        imageHintText.setVisibility(View.VISIBLE);
+        clearParsedFields();
+        rawTextField.setText("");
+
+        TextRecognizer recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        recognizeNextImage(uris, 0, new StringBuilder(), recognizer, 0);
+    }
+
+    private void recognizeNextImage(List<Uri> uris, int index, StringBuilder combinedText, TextRecognizer recognizer, int successCount) {
+        if (index >= uris.size()) {
+            recognizer.close();
+            String recognized = combinedText.toString().trim();
+            rawTextField.setText(recognized);
+            if (successCount == 0 || recognized.isEmpty()) {
+                statusText.setText("截图识别失败，可以手工输入字段。");
+                Toast.makeText(this, "OCR 失败，可以手工输入字段。", Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            statusText.setText("已合并识别 " + successCount + " 张截图，点击预览可放大核对第一张；请检查字段后计算。");
+            parseAndFill(recognized);
+            return;
+        }
+
+        statusText.setText("正在识别截图 " + (index + 1) + "/" + uris.size() + "...");
         try {
-            currentImageUri = uri;
-            imagePreview.setImageURI(uri);
-            imagePreview.setVisibility(View.VISIBLE);
-            imageHintText.setVisibility(View.VISIBLE);
-            statusText.setText("正在识别截图文字，点击截图可放大核对...");
-            InputImage image = InputImage.fromFilePath(this, uri);
-            TextRecognizer recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+            InputImage image = InputImage.fromFilePath(this, uris.get(index));
             recognizer.process(image)
                     .addOnSuccessListener(text -> {
-                        String recognized = text.getText();
-                        rawTextField.setText(recognized);
-                        statusText.setText("识别完成，点击截图可放大核对；请检查字段后计算。");
-                        parseAndFill(recognized);
+                        appendRecognizedText(combinedText, index, text.getText());
+                        recognizeNextImage(uris, index + 1, combinedText, recognizer, successCount + 1);
                     })
                     .addOnFailureListener(e -> {
-                        statusText.setText("识别失败：" + e.getMessage());
-                        Toast.makeText(this, "OCR 失败，可以手工输入字段。", Toast.LENGTH_LONG).show();
+                        appendRecognizedText(combinedText, index, "识别失败：" + e.getMessage());
+                        recognizeNextImage(uris, index + 1, combinedText, recognizer, successCount);
                     });
         } catch (IOException error) {
-            statusText.setText("无法读取图片：" + error.getMessage());
-            Toast.makeText(this, "无法读取图片", Toast.LENGTH_LONG).show();
+            appendRecognizedText(combinedText, index, "无法读取图片：" + error.getMessage());
+            recognizeNextImage(uris, index + 1, combinedText, recognizer, successCount);
         }
+    }
+
+    private void appendRecognizedText(StringBuilder builder, int imageIndex, String text) {
+        if (builder.length() > 0) {
+            builder.append("\n\n");
+        }
+        builder.append("【截图")
+                .append(imageIndex + 1)
+                .append("】\n")
+                .append(text == null ? "" : text.trim());
+    }
+
+    private String previewHint(int imageCount) {
+        if (imageCount <= 1) {
+            return "点击截图可放大核对";
+        }
+        return "已选择 " + imageCount + " 张截图，点击预览可放大核对第一张";
     }
 
     private void openCurrentImage() {
@@ -318,6 +409,14 @@ public class MainActivity extends Activity {
         if (input.bookingClass != null && !input.bookingClass.isEmpty()) {
             bookingClassField.setText(input.bookingClass);
         }
+    }
+
+    private void clearParsedFields() {
+        flightField.setText("");
+        dateField.setText("");
+        originField.setText("");
+        destinationField.setText("");
+        bookingClassField.setText("");
     }
 
     private void calculateFromFields() {
