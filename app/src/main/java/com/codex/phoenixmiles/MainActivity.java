@@ -11,11 +11,13 @@ import android.os.Bundle;
 import android.text.InputFilter;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -31,6 +33,10 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int REQUEST_PICK_IMAGE = 1001;
     private static final String OFFICIAL_CALCULATOR_URL = "https://ffp.airchina.com.cn/plan/mileage_accumulate_calculator.html";
+    private static final int DEFAULT_MEMBER_TIER_INDEX = 3;
+    private static final String[] MEMBER_GRADE_VALUES = {
+            "Normal", "Junior", "Silver", "Gold", "Platinum", "LifetimePlatinum"
+    };
 
     private EditText flightField;
     private EditText dateField;
@@ -38,6 +44,7 @@ public class MainActivity extends Activity {
     private EditText destinationField;
     private EditText bookingClassField;
     private EditText rawTextField;
+    private Spinner memberTierSpinner;
     private TextView statusText;
     private TextView resultText;
     private TextView imageHintText;
@@ -121,6 +128,7 @@ public class MainActivity extends Activity {
         destinationField = field("到达三字码，例如 CKG");
         bookingClassField = field("舱位代码，例如 S");
         bookingClassField.setFilters(new InputFilter[]{new InputFilter.AllCaps(), new InputFilter.LengthFilter(1)});
+        memberTierSpinner = createMemberTierSpinner();
 
         form.addView(label("航班号"));
         form.addView(flightField);
@@ -133,6 +141,8 @@ public class MainActivity extends Activity {
         form.addView(airportRow);
         form.addView(label("舱位"));
         form.addView(bookingClassField);
+        form.addView(label("会员级别"));
+        form.addView(memberTierSpinner);
         root.addView(form);
 
         LinearLayout calcRow = row();
@@ -329,12 +339,14 @@ public class MainActivity extends Activity {
     }
 
     private void queryOfficial(FlightInput input) {
-        statusText.setText("正在查询国航官方累计计算器...");
+        String memberGrade = selectedMemberGradeValue();
+        String memberTierLabel = selectedMemberTierLabel();
+        statusText.setText("正在按" + memberTierLabel + "查询国航官方累计计算器...");
         resultText.setText("正在查询国航官方数据，请稍候。");
         new Thread(() -> {
             try {
-                OfficialMileageResult officialResult = OfficialMileageClient.query(input, "Normal");
-                String formatted = OfficialResultFormatter.format(input, officialResult);
+                OfficialMileageResult officialResult = OfficialMileageClient.query(input, memberGrade);
+                String formatted = OfficialResultFormatter.format(input, officialResult, memberTierLabel);
                 String status = officialStatusText(officialResult);
                 runOnUiThread(() -> {
                     statusText.setText(status);
@@ -346,6 +358,7 @@ public class MainActivity extends Activity {
                 String formatted = "国航官方查询失败，以下为本地估算兜底：\n"
                         + error.getMessage()
                         + "\n\n"
+                        + "本地估算暂未计算" + memberTierLabel + "额外奖励，最终请以国航官方结果和实际入账为准。\n\n"
                         + ResultFormatter.format(fallback);
                 runOnUiThread(() -> {
                     statusText.setText("国航官方查询失败，已显示本地估算。");
@@ -354,6 +367,21 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private String selectedMemberGradeValue() {
+        int position = memberTierSpinner == null ? DEFAULT_MEMBER_TIER_INDEX : memberTierSpinner.getSelectedItemPosition();
+        if (position < 0 || position >= MEMBER_GRADE_VALUES.length) {
+            return MEMBER_GRADE_VALUES[DEFAULT_MEMBER_TIER_INDEX];
+        }
+        return MEMBER_GRADE_VALUES[position];
+    }
+
+    private String selectedMemberTierLabel() {
+        if (memberTierSpinner == null || memberTierSpinner.getSelectedItem() == null) {
+            return "金卡";
+        }
+        return memberTierSpinner.getSelectedItem().toString();
     }
 
     private String officialStatusText(OfficialMileageResult result) {
@@ -432,6 +460,21 @@ public class MainActivity extends Activity {
         editText.setBackgroundResource(com.codex.phoenixmiles.R.drawable.edit_text_background);
         editText.setPadding(dp(12), dp(8), dp(12), dp(8));
         return editText;
+    }
+
+    private Spinner createMemberTierSpinner() {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(
+                this,
+                com.codex.phoenixmiles.R.array.member_tiers,
+                android.R.layout.simple_spinner_item
+        );
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setSelection(DEFAULT_MEMBER_TIER_INDEX);
+        spinner.setMinimumHeight(dp(46));
+        spinner.setPadding(dp(8), dp(6), dp(8), dp(6));
+        return spinner;
     }
 
     private Button primaryButton(String text) {

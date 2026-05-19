@@ -5,6 +5,10 @@ final class OfficialResultFormatter {
     }
 
     static String format(FlightInput input, OfficialMileageResult result) {
+        return format(input, result, "");
+    }
+
+    static String format(FlightInput input, OfficialMileageResult result, String memberTierLabel) {
         if (result == null) {
             return "国航官方查询没有返回结果。";
         }
@@ -22,6 +26,7 @@ final class OfficialResultFormatter {
                         + " -> "
                         + input.destinationCode
                         + "\n"
+                        + formatMemberTierLine(memberTierLabel)
                         + "官方返回："
                         + message;
             }
@@ -42,6 +47,11 @@ final class OfficialResultFormatter {
                 .append(" -> ")
                 .append(input.destinationCode)
                 .append("\n\n");
+        if (memberTierLabel != null && !memberTierLabel.trim().isEmpty()) {
+            builder.append("会员级别：")
+                    .append(memberTierLabel.trim())
+                    .append("\n");
+        }
         builder.append("匹配舱位：")
                 .append(row.subClassName)
                 .append("\n");
@@ -59,6 +69,13 @@ final class OfficialResultFormatter {
                 .append("\n\n");
         builder.append("来源：国航凤凰知音里程累积计算器。结果仍以实际入账为准。");
         return builder.toString();
+    }
+
+    private static String formatMemberTierLine(String memberTierLabel) {
+        if (memberTierLabel == null || memberTierLabel.trim().isEmpty()) {
+            return "";
+        }
+        return "会员级别：" + memberTierLabel.trim() + "\n";
     }
 
     private static String formatAllRows(OfficialMileageResult result) {
