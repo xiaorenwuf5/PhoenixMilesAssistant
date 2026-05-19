@@ -15,7 +15,7 @@ final class FlightParser {
     private static final Pattern AIR_CHINA_NUMBER_PATTERN = Pattern.compile("(中国国航|国航|航班号|航班)\\s*[:：#号\\- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")(?!\\s*[- ]?\\s*" + OCR_DIGIT + ")", Pattern.CASE_INSENSITIVE);
     private static final Pattern DATE_PATTERN = Pattern.compile("(?<!\\d)(20\\d{2})[-年/.](\\d{1,2})[-月/.](\\d{1,2})");
     private static final Pattern SHORT_DATE_PATTERN = Pattern.compile("(?<!\\d)(\\d{1,2})[-月/.](\\d{1,2})(?!\\d)");
-    private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("[舱等]?\\s*[（(]\\s*([A-Z])\\s*[）)]", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("(经济舱|超级经济舱|公务舱|头等舱|舱等)?\\s*[（(]\\s*([A-Z])\\s*[0-9]?\\s*[）)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern CABIN_TEXT_PATTERN = Pattern.compile("舱等\\s*[:：]?\\s*([A-Z])|([A-Z])\\s*舱", Pattern.CASE_INSENSITIVE);
     private static final Pattern EXTRA_MILE_PATTERN = Pattern.compile("额外\\s*([0-9]{2,5})\\s*里程");
     private static final String[] FLIGHT_SCORE_KEYWORDS = {
@@ -177,11 +177,13 @@ final class FlightParser {
     }
 
     private static String parseCabin(String value) {
+        List<CabinCandidate> candidates = new ArrayList<>();
+
         Matcher parenMatcher = CABIN_PAREN_PATTERN.matcher(value);
         while (parenMatcher.find()) {
-            String cabin = parenMatcher.group(1).toUpperCase(Locale.US);
+            String cabin = parenMatcher.group(2).toUpperCase(Locale.US);
             if (FareRules.find(cabin) != null) {
-                return cabin;
+                candidates.add(new CabinCandidate(cabin, cabinScore(value, parenMatcher.start(), parenMatcher.end(), 80), parenMatcher.start()));
             }
         }
 
@@ -189,10 +191,53 @@ final class FlightParser {
         while (textMatcher.find()) {
             String cabin = textMatcher.group(1) != null ? textMatcher.group(1) : textMatcher.group(2);
             if (cabin != null && FareRules.find(cabin) != null) {
-                return cabin.toUpperCase(Locale.US);
+                candidates.add(new CabinCandidate(cabin.toUpperCase(Locale.US), cabinScore(value, textMatcher.start(), textMatcher.end(), 50), textMatcher.start()));
             }
         }
+        if (!candidates.isEmpty()) {
+            Collections.sort(candidates, (left, right) -> {
+                if (left.score != right.score) {
+                    return Integer.compare(right.score, left.score);
+                }
+                return Integer.compare(left.start, right.start);
+            });
+            return candidates.get(0).cabin;
+        }
         return "";
+    }
+
+    private static int cabinScore(String value, int start, int end, int baseScore) {
+        int windowStart = Math.max(0, start - 32);
+        int windowEnd = Math.min(value.length(), end + 4);
+        String context = value.substring(windowStart, windowEnd);
+        int lineStart = value.lastIndexOf('\n', start);
+        int lineEnd = value.indexOf('\n', end);
+        if (lineStart < 0) {
+            lineStart = 0;
+        } else {
+            lineStart += 1;
+        }
+        if (lineEnd < 0) {
+            lineEnd = value.length();
+        }
+        String lineContext = value.substring(lineStart, lineEnd);
+        int score = baseScore;
+        if (lineContext.contains("成人")) {
+            score += 100;
+        }
+        if (lineContext.contains("儿童") || lineContext.contains("婴儿")) {
+            score -= 100;
+        }
+        if (lineContext.contains("全价")) {
+            score -= 30;
+        }
+        if (context.contains("经济舱") || context.contains("舱等") || context.contains("舱位")) {
+            score += 20;
+        }
+        if (context.contains("票面价") || context.contains("机票详情")) {
+            score += 10;
+        }
+        return score;
     }
 
     private static LocalDate safeDate(int year, int month, int day) {
@@ -221,6 +266,18 @@ final class FlightParser {
 
         FlightCandidate(String flightNumber, int score, int start) {
             this.flightNumber = flightNumber;
+            this.score = score;
+            this.start = start;
+        }
+    }
+
+    private static final class CabinCandidate {
+        final String cabin;
+        final int score;
+        final int start;
+
+        CabinCandidate(String cabin, int score, int start) {
+            this.cabin = cabin;
             this.score = score;
             this.start = start;
         }

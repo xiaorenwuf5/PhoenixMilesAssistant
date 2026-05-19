@@ -51,7 +51,12 @@ public class MainActivity extends Activity {
     private TextView resultText;
     private TextView imageHintText;
     private ImageView imagePreview;
+    private LinearLayout imageNavRow;
+    private Button previousImageButton;
+    private Button nextImageButton;
     private Uri currentImageUri;
+    private List<Uri> currentImageUris = new ArrayList<>();
+    private int currentImageIndex;
     private String lastResult = "";
 
     @Override
@@ -112,6 +117,17 @@ public class MainActivity extends Activity {
         imagePreview.setContentDescription("点击截图可放大核对");
         imagePreview.setOnClickListener(v -> openCurrentImage());
         root.addView(imagePreview);
+
+        imageNavRow = row();
+        previousImageButton = secondaryButton("上一张");
+        previousImageButton.setOnClickListener(v -> showAdjacentImage(-1));
+        imageNavRow.addView(previousImageButton, weightParams());
+
+        nextImageButton = secondaryButton("下一张");
+        nextImageButton.setOnClickListener(v -> showAdjacentImage(1));
+        imageNavRow.addView(nextImageButton, weightParamsWithMargin(dp(10)));
+        imageNavRow.setVisibility(View.GONE);
+        root.addView(imageNavRow);
 
         imageHintText = text("点击截图可放大核对", 12, false);
         imageHintText.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
@@ -287,11 +303,9 @@ public class MainActivity extends Activity {
             return;
         }
 
-        currentImageUri = uris.get(0);
-        imagePreview.setImageURI(currentImageUri);
-        imagePreview.setVisibility(View.VISIBLE);
-        imagePreview.setContentDescription(previewHint(uris.size()));
-        imageHintText.setText(previewHint(uris.size()));
+        currentImageUris = new ArrayList<>(uris);
+        currentImageIndex = 0;
+        updateImagePreview();
         imageHintText.setVisibility(View.VISIBLE);
         clearParsedFields();
         rawTextField.setText("");
@@ -311,7 +325,7 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            statusText.setText("已合并识别 " + successCount + " 张截图，点击预览可放大核对第一张；请检查字段后计算。");
+            statusText.setText("已合并识别 " + successCount + " 张截图，可切换预览并放大核对；请检查字段后计算。");
             parseAndFill(recognized);
             return;
         }
@@ -348,7 +362,45 @@ public class MainActivity extends Activity {
         if (imageCount <= 1) {
             return "点击截图可放大核对";
         }
-        return "已选择 " + imageCount + " 张截图，点击预览可放大核对第一张";
+        return "已选择 " + imageCount + " 张截图，当前第 " + (currentImageIndex + 1) + " 张，点击可放大核对";
+    }
+
+    private void updateImagePreview() {
+        if (currentImageUris == null || currentImageUris.isEmpty()) {
+            currentImageUri = null;
+            imagePreview.setVisibility(View.GONE);
+            imageNavRow.setVisibility(View.GONE);
+            imageHintText.setVisibility(View.GONE);
+            return;
+        }
+
+        if (currentImageIndex < 0) {
+            currentImageIndex = 0;
+        }
+        if (currentImageIndex >= currentImageUris.size()) {
+            currentImageIndex = currentImageUris.size() - 1;
+        }
+
+        currentImageUri = currentImageUris.get(currentImageIndex);
+        imagePreview.setImageURI(currentImageUri);
+        imagePreview.setVisibility(View.VISIBLE);
+        String hint = previewHint(currentImageUris.size());
+        imagePreview.setContentDescription(hint);
+        imageHintText.setText(hint);
+        imageNavRow.setVisibility(currentImageUris.size() > 1 ? View.VISIBLE : View.GONE);
+    }
+
+    private void showAdjacentImage(int direction) {
+        if (currentImageUris == null || currentImageUris.isEmpty()) {
+            return;
+        }
+        currentImageIndex += direction;
+        if (currentImageIndex < 0) {
+            currentImageIndex = currentImageUris.size() - 1;
+        } else if (currentImageIndex >= currentImageUris.size()) {
+            currentImageIndex = 0;
+        }
+        updateImagePreview();
     }
 
     private void openCurrentImage() {
