@@ -14,9 +14,11 @@ final class AirportCatalog {
     static {
         add(new Airport("PEK", "北京", "首都", 40.0799, 116.6031),
                 "北京首都", "北京首都机场", "北京首都国际机场", "北京首都国际机场T3", "北京首都国际机场T2",
-                "北京首都国际", "北京首都国际机", "北京首都国际机杨",
+                "北京首都国际", "北京首都国际机", "北京首都国际机杨", "北京首都国际机扬",
+                "北京首都机", "北京首都机杨", "北京首都机扬",
                 "首都机场", "首都国际机场", "首都国际机场T3", "首都国际机场T2",
-                "首都国际", "首都国际机", "首都国际机杨", "首都机", "PEK");
+                "首都国际", "首都国际机", "首都国际机杨", "首都国际机扬",
+                "首都机", "首都机杨", "首都机扬", "PEK");
         add(new Airport("PKX", "北京", "大兴", 39.5098, 116.4105),
                 "北京大兴", "大兴机场", "大兴国际机场", "PKX");
         add(new Airport("CKG", "重庆", "江北", 29.7192, 106.6417),
@@ -85,6 +87,7 @@ final class AirportCatalog {
                 hits.add(new Hit(index, entry.getKey().length(), AIRPORTS.get(entry.getValue())));
             }
         }
+        addFuzzyHits(normalized, hits);
 
         Collections.sort(hits, (left, right) -> {
             if (left.index != right.index) {
@@ -107,6 +110,8 @@ final class AirportCatalog {
         return value == null ? "" : value
                 .toUpperCase(Locale.US)
                 .replace(" ", "")
+                .replace("\t", "")
+                .replace("　", "")
                 .replace("\n", "")
                 .replace("\r", "")
                 .replace("T1", "")
@@ -133,6 +138,46 @@ final class AirportCatalog {
             }
         }
         return false;
+    }
+
+    private static void addFuzzyHits(String normalized, List<Hit> hits) {
+        addFuzzyHit(hits, fuzzyBeijingCapitalIndex(normalized), "PEK");
+    }
+
+    private static void addFuzzyHit(List<Hit> hits, int index, String airportCode) {
+        if (index < 0) {
+            return;
+        }
+        Airport airport = AIRPORTS.get(airportCode);
+        if (airport != null) {
+            hits.add(new Hit(index, 2, airport));
+        }
+    }
+
+    private static int fuzzyBeijingCapitalIndex(String normalized) {
+        int direct = firstIndexOfAny(normalized,
+                "首都国际", "首都机场", "首都机杨", "首都机扬", "首都机", "北京首都", "PEK");
+        if (direct >= 0) {
+            return direct;
+        }
+
+        int beijing = normalized.indexOf("北京");
+        int capital = firstIndexOfAny(normalized, "首都", "首部");
+        if (beijing >= 0 && capital >= 0 && Math.abs(beijing - capital) <= 12) {
+            return Math.min(beijing, capital);
+        }
+        return -1;
+    }
+
+    private static int firstIndexOfAny(String value, String... needles) {
+        int best = -1;
+        for (String needle : needles) {
+            int index = value.indexOf(needle);
+            if (index >= 0 && (best < 0 || index < best)) {
+                best = index;
+            }
+        }
+        return best;
     }
 
     private static final class Hit {
