@@ -11,11 +11,12 @@ import java.util.regex.Pattern;
 final class FlightParser {
     private static final String OCR_DIGIT = "[0-9OIL]";
     private static final String OCR_FLIGHT_DIGITS = OCR_DIGIT + "(?:\\s*[- ]?\\s*" + OCR_DIGIT + "){2,3}";
-    private static final Pattern FLIGHT_WITH_CARRIER_PATTERN = Pattern.compile("(?<![A-Z0-9])([C0O]\\s*[- ]?\\s*A)\\s*[- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")(?!\\s*[- ]?\\s*" + OCR_DIGIT + ")", Pattern.CASE_INSENSITIVE);
-    private static final Pattern AIR_CHINA_NUMBER_PATTERN = Pattern.compile("(中国国航|国航|航班号|航班)\\s*[:：#号\\- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")(?!\\s*[- ]?\\s*" + OCR_DIGIT + ")", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DATE_PATTERN = Pattern.compile("(?<!\\d)(20\\d{2})[-年/.](\\d{1,2})[-月/.](\\d{1,2})");
-    private static final Pattern SHORT_DATE_PATTERN = Pattern.compile("(?<!\\d)(\\d{1,2})[-月/.](\\d{1,2})(?!\\d)");
-    private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("(经济舱|超级经济舱|公务舱|头等舱|舱等)?\\s*[（(]\\s*([A-Z])\\s*[0-9]?\\s*[）)]", Pattern.CASE_INSENSITIVE);
+    private static final String OCR_FLIGHT_TAIL = "(?![0-9OIL])";
+    private static final Pattern FLIGHT_WITH_CARRIER_PATTERN = Pattern.compile("(?<![A-Z0-9])([C0O]\\s*[- ]?\\s*A)\\s*[- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")" + OCR_FLIGHT_TAIL, Pattern.CASE_INSENSITIVE);
+    private static final Pattern AIR_CHINA_NUMBER_PATTERN = Pattern.compile("((?:中\\s*国\\s*)?国\\s*航|航\\s*班\\s*号|航\\s*班)\\s*[:：#号\\- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")" + OCR_FLIGHT_TAIL, Pattern.CASE_INSENSITIVE);
+    private static final Pattern DATE_PATTERN = Pattern.compile("(?<!\\d)(20\\d{2})\\s*[-年/.一—–]\\s*(\\d{1,2})\\s*[-月/.一—–]\\s*(\\d{1,2})");
+    private static final Pattern SHORT_DATE_PATTERN = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*[-月/.一—–]\\s*(\\d{1,2})(?!\\d)");
+    private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("(经济舱|超级经济舱|公务舱|头等舱|舱等)?\\s*[（(]\\s*([A-Z])\\s*[0-9OIL]?\\s*[）)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern CABIN_TEXT_PATTERN = Pattern.compile("舱等\\s*[:：]?\\s*([A-Z])|([A-Z])\\s*舱", Pattern.CASE_INSENSITIVE);
     private static final Pattern EXTRA_MILE_PATTERN = Pattern.compile("额外\\s*([0-9]{2,5})\\s*里程");
     private static final String[] FLIGHT_SCORE_KEYWORDS = {
@@ -210,6 +211,7 @@ final class FlightParser {
         int windowStart = Math.max(0, start - 32);
         int windowEnd = Math.min(value.length(), end + 4);
         String context = value.substring(windowStart, windowEnd);
+        String compactContext = compactOcrText(context);
         int lineStart = value.lastIndexOf('\n', start);
         int lineEnd = value.indexOf('\n', end);
         if (lineStart < 0) {
@@ -221,23 +223,33 @@ final class FlightParser {
             lineEnd = value.length();
         }
         String lineContext = value.substring(lineStart, lineEnd);
+        String compactLineContext = compactOcrText(lineContext);
+        String beforeContext = compactOcrText(value.substring(Math.max(0, start - 28), start));
         int score = baseScore;
-        if (lineContext.contains("成人")) {
-            score += 100;
+        if (beforeContext.contains("成人")) {
+            score += 120;
+        } else if (compactLineContext.contains("成人") && !compactLineContext.contains("儿童")) {
+            score += 60;
         }
-        if (lineContext.contains("儿童") || lineContext.contains("婴儿")) {
-            score -= 100;
+        if (beforeContext.contains("儿童") || beforeContext.contains("婴儿")) {
+            score -= 120;
         }
-        if (lineContext.contains("全价")) {
+        if (beforeContext.contains("全价")) {
+            score -= 80;
+        } else if (compactLineContext.length() <= 48 && compactLineContext.contains("全价")) {
             score -= 30;
         }
-        if (context.contains("经济舱") || context.contains("舱等") || context.contains("舱位")) {
+        if (compactContext.contains("经济舱") || compactContext.contains("舱等") || compactContext.contains("舱位")) {
             score += 20;
         }
-        if (context.contains("票面价") || context.contains("机票详情")) {
+        if (compactContext.contains("票面价") || compactContext.contains("机票详情")) {
             score += 10;
         }
         return score;
+    }
+
+    private static String compactOcrText(String value) {
+        return value == null ? "" : value.replaceAll("[\\s\\u00A0\\u2007\\u202F\\u200B\\u200C\\u200D]+", "");
     }
 
     private static LocalDate safeDate(int year, int month, int day) {
