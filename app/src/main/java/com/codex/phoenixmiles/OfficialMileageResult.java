@@ -21,6 +21,10 @@ final class OfficialMileageResult {
         this.matchedRow = matchedRow;
     }
 
+    boolean isRouteMismatch() {
+        return message != null && message.contains("起降地") && message.contains("不一致");
+    }
+
     static OfficialMileageResult fromJson(String json, String bookingClass) throws JSONException {
         JSONObject object = new JSONObject(json);
         boolean success = object.optBoolean("success") || object.optInt("status") == 1;

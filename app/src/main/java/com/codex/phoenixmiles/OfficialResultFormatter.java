@@ -9,7 +9,23 @@ final class OfficialResultFormatter {
             return "国航官方查询没有返回结果。";
         }
         if (!result.success) {
-            return "国航官方查询失败：" + (result.message == null || result.message.isEmpty() ? "未知错误" : result.message);
+            String message = result.message == null || result.message.isEmpty() ? "未知错误" : result.message;
+            if (result.isRouteMismatch()) {
+                return "国航官方查询失败：航班号和出发/到达机场不匹配。\n"
+                        + "请核对 OCR 识别的航班号、出发机场、到达机场，必要时点击截图放大核对。\n\n"
+                        + "当前查询："
+                        + input.normalizedFlightNumber()
+                        + "  "
+                        + input.dateText()
+                        + "  "
+                        + input.originCode
+                        + " -> "
+                        + input.destinationCode
+                        + "\n"
+                        + "官方返回："
+                        + message;
+            }
+            return "国航官方查询失败：" + message;
         }
         if (result.matchedRow == null) {
             return "国航官方已返回结果，但没有找到 " + input.bookingClass + " 舱对应行。\n\n" + formatAllRows(result);

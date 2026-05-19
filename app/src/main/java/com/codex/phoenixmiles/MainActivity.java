@@ -40,7 +40,9 @@ public class MainActivity extends Activity {
     private EditText rawTextField;
     private TextView statusText;
     private TextView resultText;
+    private TextView imageHintText;
     private ImageView imagePreview;
+    private Uri currentImageUri;
     private String lastResult = "";
 
     @Override
@@ -98,7 +100,14 @@ public class MainActivity extends Activity {
         imagePreview.setMaxHeight(dp(260));
         imagePreview.setVisibility(View.GONE);
         imagePreview.setPadding(0, dp(12), 0, dp(6));
+        imagePreview.setContentDescription("点击截图可放大核对");
+        imagePreview.setOnClickListener(v -> openCurrentImage());
         root.addView(imagePreview);
+
+        imageHintText = text("点击截图可放大核对", 12, false);
+        imageHintText.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
+        imageHintText.setVisibility(View.GONE);
+        root.addView(imageHintText);
 
         statusText = text("也可以在相册或阿里商旅截图后，点分享，选择这个 App。", 13, false);
         statusText.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
@@ -217,16 +226,18 @@ public class MainActivity extends Activity {
 
     private void processImage(Uri uri) {
         try {
+            currentImageUri = uri;
             imagePreview.setImageURI(uri);
             imagePreview.setVisibility(View.VISIBLE);
-            statusText.setText("正在识别截图文字...");
+            imageHintText.setVisibility(View.VISIBLE);
+            statusText.setText("正在识别截图文字，点击截图可放大核对...");
             InputImage image = InputImage.fromFilePath(this, uri);
             TextRecognizer recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
             recognizer.process(image)
                     .addOnSuccessListener(text -> {
                         String recognized = text.getText();
                         rawTextField.setText(recognized);
-                        statusText.setText("识别完成，可以检查字段后计算。");
+                        statusText.setText("识别完成，点击截图可放大核对；请检查字段后计算。");
                         parseAndFill(recognized);
                     })
                     .addOnFailureListener(e -> {
@@ -236,6 +247,22 @@ public class MainActivity extends Activity {
         } catch (IOException error) {
             statusText.setText("无法读取图片：" + error.getMessage());
             Toast.makeText(this, "无法读取图片", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openCurrentImage() {
+        if (currentImageUri == null) {
+            return;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(currentImageUri, "image/*");
+        intent.setClipData(ClipData.newUri(getContentResolver(), "截图", currentImageUri));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "无法打开原图，请在相册中查看。", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -308,8 +335,9 @@ public class MainActivity extends Activity {
             try {
                 OfficialMileageResult officialResult = OfficialMileageClient.query(input, "Normal");
                 String formatted = OfficialResultFormatter.format(input, officialResult);
+                String status = officialStatusText(officialResult);
                 runOnUiThread(() -> {
-                    statusText.setText("国航官方查询完成。");
+                    statusText.setText(status);
                     lastResult = formatted;
                     resultText.setText(formatted);
                 });
@@ -326,6 +354,19 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private String officialStatusText(OfficialMileageResult result) {
+        if (result == null) {
+            return "国航官方没有返回可用结果。";
+        }
+        if (result.success) {
+            return "国航官方查询完成。";
+        }
+        if (result.isRouteMismatch()) {
+            return "航班号和出发/到达机场不匹配，请核对截图。";
+        }
+        return "国航官方返回提示，请核对字段。";
     }
 
     private void openOfficialCalculator() {
