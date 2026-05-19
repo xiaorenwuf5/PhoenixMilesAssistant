@@ -12,10 +12,13 @@ final class FlightParser {
     private static final String OCR_DIGIT = "[0-9OIL]";
     private static final String OCR_FLIGHT_DIGITS = OCR_DIGIT + "(?:\\s*[- ]?\\s*" + OCR_DIGIT + "){2,3}";
     private static final String OCR_FLIGHT_TAIL = "(?![0-9OIL])";
+    private static final String OCR_DATE_DIGIT = "[0-9OILS]";
+    private static final String OCR_DATE_NUMBER = OCR_DATE_DIGIT + "(?:\\s*" + OCR_DATE_DIGIT + ")?";
+    private static final String OCR_DATE_SEPARATOR = "[\\p{Pd}\\u2212\\uFF0D\\uFE63一年月/.]";
     private static final Pattern FLIGHT_WITH_CARRIER_PATTERN = Pattern.compile("(?<![A-Z0-9])([C0O]\\s*[- ]?\\s*A)\\s*[- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")" + OCR_FLIGHT_TAIL, Pattern.CASE_INSENSITIVE);
     private static final Pattern AIR_CHINA_NUMBER_PATTERN = Pattern.compile("((?:中\\s*国\\s*)?国\\s*航|航\\s*班\\s*号|航\\s*班)\\s*[:：#号\\- ]?\\s*(" + OCR_FLIGHT_DIGITS + ")" + OCR_FLIGHT_TAIL, Pattern.CASE_INSENSITIVE);
-    private static final Pattern DATE_PATTERN = Pattern.compile("(?<!\\d)(20\\d{2})\\s*[-年/.一—–]\\s*(\\d{1,2})\\s*[-月/.一—–]\\s*(\\d{1,2})");
-    private static final Pattern SHORT_DATE_PATTERN = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*[-月/.一—–]\\s*(\\d{1,2})(?!\\d)");
+    private static final Pattern DATE_PATTERN = Pattern.compile("(?<![0-9OILS])(20\\s*" + OCR_DATE_DIGIT + "\\s*" + OCR_DATE_DIGIT + ")\\s*" + OCR_DATE_SEPARATOR + "+\\s*(" + OCR_DATE_NUMBER + ")\\s*" + OCR_DATE_SEPARATOR + "+\\s*(" + OCR_DATE_NUMBER + ")(?![0-9OILS])", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SHORT_DATE_PATTERN = Pattern.compile("(?<![0-9OILS])(" + OCR_DATE_NUMBER + ")\\s*" + OCR_DATE_SEPARATOR + "+\\s*(" + OCR_DATE_NUMBER + ")(?![0-9OILS])", Pattern.CASE_INSENSITIVE);
     private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("(经济舱|超级经济舱|公务舱|头等舱|舱等)?\\s*[（(]\\s*([A-Z])\\s*[0-9OIL]?\\s*[）)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern CABIN_TEXT_PATTERN = Pattern.compile("舱等\\s*[:：]?\\s*([A-Z])|([A-Z])\\s*舱", Pattern.CASE_INSENSITIVE);
     private static final Pattern EXTRA_MILE_PATTERN = Pattern.compile("额外\\s*([0-9]{2,5})\\s*里程");
@@ -155,26 +158,77 @@ final class FlightParser {
     }
 
     private static LocalDate parseDate(String value) {
+        LocalDate date = parseDateFromText(value);
+        if (date != null) {
+            return date;
+        }
+        return parseDateFromText(compactOcrText(value));
+    }
+
+    private static LocalDate parseDateFromText(String value) {
         Matcher fullMatcher = DATE_PATTERN.matcher(value);
-        if (fullMatcher.find()) {
-            int year = safeInt(fullMatcher.group(1), 0);
-            int month = safeInt(fullMatcher.group(2), 0);
-            int day = safeInt(fullMatcher.group(3), 0);
-            return safeDate(year, month, day);
+        while (fullMatcher.find()) {
+            int year = safeDateInt(fullMatcher.group(1), 0);
+            int month = safeDateInt(fullMatcher.group(2), 0);
+            int day = safeDateInt(fullMatcher.group(3), 0);
+            LocalDate date = safeDate(year, month, day);
+            if (date != null) {
+                return date;
+            }
         }
 
+        List<DateCandidate> candidates = new ArrayList<>();
         Matcher shortMatcher = SHORT_DATE_PATTERN.matcher(value);
-        if (shortMatcher.find()) {
-            int month = safeInt(shortMatcher.group(1), 0);
-            int day = safeInt(shortMatcher.group(2), 0);
+        while (shortMatcher.find()) {
+            int month = safeDateInt(shortMatcher.group(1), 0);
+            int day = safeDateInt(shortMatcher.group(2), 0);
             LocalDate today = LocalDate.now();
             LocalDate date = safeDate(today.getYear(), month, day);
             if (date != null && date.isBefore(today.minusDays(90))) {
                 date = safeDate(today.getYear() + 1, month, day);
             }
-            return date;
+            int score = dateScore(value, shortMatcher.start(), shortMatcher.end());
+            if (date != null && score > 0) {
+                candidates.add(new DateCandidate(date, score, shortMatcher.start()));
+            }
+        }
+
+        if (!candidates.isEmpty()) {
+            Collections.sort(candidates, (left, right) -> {
+                if (left.score != right.score) {
+                    return Integer.compare(right.score, left.score);
+                }
+                return Integer.compare(left.start, right.start);
+            });
+            return candidates.get(0).date;
         }
         return null;
+    }
+
+    private static int dateScore(String value, int start, int end) {
+        String before = compactOcrText(value.substring(Math.max(0, start - 10), start));
+        String after = compactOcrText(value.substring(end, Math.min(value.length(), end + 18)));
+        String widerAfter = compactOcrText(value.substring(end, Math.min(value.length(), end + 32)));
+        int score = 80;
+        if (after.contains("周") || after.contains("星期")) {
+            score += 100;
+        }
+        if (widerAfter.contains("共") && (widerAfter.contains("小时") || widerAfter.contains("分钟"))) {
+            score += 60;
+        }
+        if (widerAfter.contains("机场") || widerAfter.contains("航班")) {
+            score += 20;
+        }
+        if (after.startsWith("折") || (before.contains("经济舱") && after.contains("折"))) {
+            score -= 220;
+        }
+        if (after.contains("退改")
+                || after.contains("托运")
+                || after.contains("¥")
+                || after.contains("￥")) {
+            score -= 100;
+        }
+        return score;
     }
 
     private static String parseCabin(String value) {
@@ -271,6 +325,22 @@ final class FlightParser {
         }
     }
 
+    private static int safeDateInt(String value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = value.toUpperCase(Locale.US)
+                .replace('O', '0')
+                .replace('I', '1')
+                .replace('L', '1')
+                .replace('S', '5')
+                .replaceAll("[^0-9]", "");
+        if (normalized.isEmpty()) {
+            return fallback;
+        }
+        return safeInt(normalized, fallback);
+    }
+
     private static final class FlightCandidate {
         final String flightNumber;
         final int score;
@@ -290,6 +360,18 @@ final class FlightParser {
 
         CabinCandidate(String cabin, int score, int start) {
             this.cabin = cabin;
+            this.score = score;
+            this.start = start;
+        }
+    }
+
+    private static final class DateCandidate {
+        final LocalDate date;
+        final int score;
+        final int start;
+
+        DateCandidate(LocalDate date, int score, int start) {
+            this.date = date;
             this.score = score;
             this.start = start;
         }

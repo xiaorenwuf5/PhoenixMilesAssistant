@@ -1,6 +1,7 @@
 package com.codex.phoenixmiles;
 
 import android.app.Activity;
+import android.app.DatePickerDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -11,6 +12,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -145,6 +147,7 @@ public class MainActivity extends Activity {
         LinearLayout form = panel();
         flightField = field("航班号，例如 CA4132");
         dateField = field("日期，例如 2026-05-20");
+        dateField.setOnClickListener(v -> showDatePicker());
         originField = field("出发三字码，例如 PEK");
         destinationField = field("到达三字码，例如 CKG");
         bookingClassField = field("舱位代码，例如 S");
@@ -154,7 +157,12 @@ public class MainActivity extends Activity {
         form.addView(label("航班号"));
         form.addView(flightField);
         form.addView(label("乘机日期"));
-        form.addView(dateField);
+        LinearLayout dateRow = row();
+        dateRow.addView(dateField, weightParams());
+        Button dateButton = secondaryButton("选择日期");
+        dateButton.setOnClickListener(v -> showDatePicker());
+        dateRow.addView(dateButton, weightParamsWithMargin(dp(10)));
+        form.addView(dateRow);
         form.addView(label("出发 / 到达"));
         LinearLayout airportRow = row();
         airportRow.addView(originField, weightParams());
@@ -197,10 +205,23 @@ public class MainActivity extends Activity {
 
         rawTextField = field("OCR 原文会显示在这里，也可以直接粘贴阿里商旅页面文字。");
         rawTextField.setMinLines(5);
+        rawTextField.setMaxLines(12);
         rawTextField.setGravity(Gravity.TOP | Gravity.START);
+        rawTextField.setVerticalScrollBarEnabled(true);
+        rawTextField.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
+        rawTextField.setScrollBarStyle(View.SCROLLBARS_INSIDE_INSET);
+        rawTextField.setOnTouchListener((view, event) -> {
+            if (view.canScrollVertically(-1) || view.canScrollVertically(1)) {
+                view.getParent().requestDisallowInterceptTouchEvent(true);
+                if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                    view.getParent().requestDisallowInterceptTouchEvent(false);
+                }
+            }
+            return false;
+        });
         root.addView(rawTextField, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(140)
+                dp(220)
         ));
 
         Button parseTextButton = secondaryButton("从文本重新识别");
@@ -475,7 +496,7 @@ public class MainActivity extends Activity {
                 missing.append("航班号 ");
             }
             if (parsed.travelDate == null) {
-                missing.append("日期 ");
+                missing.append("日期（点选择日期） ");
             }
             if (parsed.originCode.isEmpty()) {
                 missing.append("出发 ");
@@ -526,6 +547,11 @@ public class MainActivity extends Activity {
         input.sourceText = rawTextField.getText().toString();
         FlightInput parsed = FlightParser.parse(input.sourceText);
         input.extraNonStatusMiles = parsed.extraNonStatusMiles;
+        if (input.travelDate == null) {
+            statusText.setText("请先选择乘机日期。");
+            showDatePicker();
+            return;
+        }
         queryOfficial(input);
     }
 
@@ -638,6 +664,27 @@ public class MainActivity extends Activity {
     private void openOfficialCalculator() {
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(OFFICIAL_CALCULATOR_URL));
         startActivity(intent);
+    }
+
+    private void showDatePicker() {
+        LocalDate initialDate = parseDate(value(dateField));
+        if (initialDate == null) {
+            initialDate = LocalDate.now();
+        }
+
+        DatePickerDialog dialog = new DatePickerDialog(
+                this,
+                (view, year, month, dayOfMonth) -> dateField.setText(safeDateText(year, month + 1, dayOfMonth)),
+                initialDate.getYear(),
+                initialDate.getMonthValue() - 1,
+                initialDate.getDayOfMonth()
+        );
+        dialog.show();
+    }
+
+    private String safeDateText(int year, int month, int day) {
+        LocalDate date = LocalDate.of(year, month, day);
+        return date.toString();
     }
 
     private void copyResult() {
