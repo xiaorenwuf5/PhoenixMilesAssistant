@@ -176,7 +176,14 @@ final class AirportCatalog {
         }
 
         int beijing = normalized.indexOf("北京");
-        int capital = firstIndexOfAny(normalized, "首都", "首部");
+        int capital = normalized.indexOf("首都");
+        if (capital >= 0) {
+            int nearbyEnd = Math.min(normalized.length(), capital + 10);
+            String nearby = normalized.substring(capital, nearbyEnd);
+            if (nearby.contains("国际") || nearby.contains("机场") || nearby.contains("机")) {
+                return capital;
+            }
+        }
         if (beijing >= 0 && capital >= 0 && Math.abs(beijing - capital) <= 12) {
             return Math.min(beijing, capital);
         }

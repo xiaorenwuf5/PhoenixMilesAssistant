@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -22,6 +23,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
@@ -29,6 +31,7 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -335,7 +338,7 @@ public class MainActivity extends Activity {
             InputImage image = InputImage.fromFilePath(this, uris.get(index));
             recognizer.process(image)
                     .addOnSuccessListener(text -> {
-                        appendRecognizedText(combinedText, index, text.getText());
+                        appendRecognizedText(combinedText, index, formatRecognizedText(text));
                         recognizeNextImage(uris, index + 1, combinedText, recognizer, successCount + 1);
                     })
                     .addOnFailureListener(e -> {
@@ -356,6 +359,48 @@ public class MainActivity extends Activity {
                 .append(imageIndex + 1)
                 .append("】\n")
                 .append(text == null ? "" : text.trim());
+    }
+
+    private String formatRecognizedText(Text recognizedText) {
+        if (recognizedText == null) {
+            return "";
+        }
+
+        List<OcrLine> lines = new ArrayList<>();
+        for (Text.TextBlock block : recognizedText.getTextBlocks()) {
+            for (Text.Line line : block.getLines()) {
+                String text = line.getText();
+                if (text == null || text.trim().isEmpty()) {
+                    continue;
+                }
+                lines.add(new OcrLine(text.trim(), line.getBoundingBox()));
+            }
+        }
+
+        if (lines.isEmpty()) {
+            return recognizedText.getText();
+        }
+
+        Collections.sort(lines, (left, right) -> {
+            int tolerance = Math.max(16, Math.min(left.height, right.height));
+            int centerDiff = Math.abs(left.centerY - right.centerY);
+            if (centerDiff <= tolerance && left.left != right.left) {
+                return Integer.compare(left.left, right.left);
+            }
+            if (left.centerY != right.centerY) {
+                return Integer.compare(left.centerY, right.centerY);
+            }
+            return Integer.compare(left.left, right.left);
+        });
+
+        StringBuilder builder = new StringBuilder();
+        for (OcrLine line : lines) {
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append(line.text);
+        }
+        return builder.toString();
     }
 
     private String previewHint(int imageCount) {
@@ -497,9 +542,30 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 OfficialMileageResult officialResult = OfficialMileageClient.query(input, memberGrade);
-                String formatted = OfficialResultFormatter.format(input, officialResult, memberTierLabel);
-                String status = officialStatusText(officialResult);
+                FlightInput resultInput = input;
+                boolean swappedRoute = false;
+                if (!officialResult.success && officialResult.isRouteMismatch()) {
+                    FlightInput swappedInput = swappedRouteInput(input);
+                    if (swappedInput != null) {
+                        OfficialMileageResult swappedResult = OfficialMileageClient.query(swappedInput, memberGrade);
+                        if (swappedResult.success) {
+                            officialResult = swappedResult;
+                            resultInput = swappedInput;
+                            swappedRoute = true;
+                        }
+                    }
+                }
+
+                FlightInput finalInput = resultInput;
+                boolean finalSwappedRoute = swappedRoute;
+                String formatted = OfficialResultFormatter.format(finalInput, officialResult, memberTierLabel);
+                String status = finalSwappedRoute
+                        ? "已按国航官方结果自动纠正出发/到达机场。"
+                        : officialStatusText(officialResult);
                 runOnUiThread(() -> {
+                    if (finalSwappedRoute) {
+                        fillFields(finalInput);
+                    }
                     statusText.setText(status);
                     lastResult = formatted;
                     resultText.setText(formatted);
@@ -518,6 +584,27 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private FlightInput swappedRouteInput(FlightInput input) {
+        if (input == null
+                || input.originCode == null
+                || input.destinationCode == null
+                || input.originCode.isEmpty()
+                || input.destinationCode.isEmpty()
+                || input.originCode.equals(input.destinationCode)) {
+            return null;
+        }
+
+        FlightInput swapped = new FlightInput();
+        swapped.flightNumber = input.flightNumber;
+        swapped.travelDate = input.travelDate;
+        swapped.originCode = input.destinationCode;
+        swapped.destinationCode = input.originCode;
+        swapped.bookingClass = input.bookingClass;
+        swapped.extraNonStatusMiles = input.extraNonStatusMiles;
+        swapped.sourceText = input.sourceText;
+        return swapped;
     }
 
     private String selectedMemberGradeValue() {
@@ -687,5 +774,25 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static final class OcrLine {
+        final String text;
+        final int left;
+        final int centerY;
+        final int height;
+
+        OcrLine(String text, Rect box) {
+            this.text = text;
+            if (box == null) {
+                left = 0;
+                centerY = 0;
+                height = 16;
+            } else {
+                left = box.left;
+                centerY = box.centerY();
+                height = Math.max(1, box.height());
+            }
+        }
     }
 }
