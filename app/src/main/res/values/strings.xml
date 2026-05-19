@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">凤凰知音累计助手</string>
+    <string-array name="member_tiers">
+        <item>普通卡</item>
+        <item>儿童卡</item>
+        <item>银卡</item>
+        <item>金卡</item>
+        <item>白金卡</item>
+        <item>终身白金卡</item>
+    </string-array>
+</resources>
