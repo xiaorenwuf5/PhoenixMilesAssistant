@@ -78,7 +78,7 @@ public class MainActivity extends Activity {
         TextView title = text("凤凰知音累计助手", 24, true);
         root.addView(title);
 
-        TextView subtitle = text("从阿里商旅截图识别航班、日期、航段和舱位，先给出本地估算，再按需跳转国航官方计算器核对。", 14, false);
+        TextView subtitle = text("从阿里商旅截图识别航班、日期、航段和舱位，然后自动查询国航官方累计计算器。", 14, false);
         subtitle.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
         subtitle.setPadding(0, dp(6), 0, dp(14));
         root.addView(subtitle);
@@ -131,7 +131,7 @@ public class MainActivity extends Activity {
         calcButton.setOnClickListener(v -> calculateFromFields());
         calcRow.addView(calcButton, weightParams());
 
-        Button officialButton = secondaryButton("官方核对");
+        Button officialButton = secondaryButton("打开官方");
         officialButton.setOnClickListener(v -> openOfficialCalculator());
         calcRow.addView(officialButton, weightParamsWithMargin(dp(10)));
         root.addView(calcRow);
@@ -167,7 +167,7 @@ public class MainActivity extends Activity {
         parseTextButton.setOnClickListener(v -> parseAndFill(rawTextField.getText().toString()));
         root.addView(parseTextButton);
 
-        TextView footer = text("内置规则覆盖国航 CA 常用付费舱位，国航快线活动按 2026-01-01 至 2026-12-31 规则处理。最终入账以国航为准。", 12, false);
+        TextView footer = text("当前版本优先查询国航官方累计计算器；网络失败时才显示本地估算兜底。最终入账以国航账户实际入账为准。", 12, false);
         footer.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
         footer.setPadding(0, dp(16), 0, 0);
         root.addView(footer);
@@ -243,7 +243,7 @@ public class MainActivity extends Activity {
         FlightInput parsed = FlightParser.parse(text);
         fillFields(parsed);
         if (parsed.hasRequiredFields()) {
-            showResult(MileageCalculator.calculate(parsed));
+            queryOfficial(parsed);
         } else {
             StringBuilder missing = new StringBuilder("已尽量识别，仍需补充：");
             if (parsed.flightNumber.isEmpty()) {
@@ -293,12 +293,39 @@ public class MainActivity extends Activity {
         input.sourceText = rawTextField.getText().toString();
         FlightInput parsed = FlightParser.parse(input.sourceText);
         input.extraNonStatusMiles = parsed.extraNonStatusMiles;
-        showResult(MileageCalculator.calculate(input));
+        queryOfficial(input);
     }
 
     private void showResult(MileageResult result) {
         lastResult = ResultFormatter.format(result);
         resultText.setText(lastResult);
+    }
+
+    private void queryOfficial(FlightInput input) {
+        statusText.setText("正在查询国航官方累计计算器...");
+        resultText.setText("正在查询国航官方数据，请稍候。");
+        new Thread(() -> {
+            try {
+                OfficialMileageResult officialResult = OfficialMileageClient.query(input, "Normal");
+                String formatted = OfficialResultFormatter.format(input, officialResult);
+                runOnUiThread(() -> {
+                    statusText.setText("国航官方查询完成。");
+                    lastResult = formatted;
+                    resultText.setText(formatted);
+                });
+            } catch (Exception error) {
+                MileageResult fallback = MileageCalculator.calculate(input);
+                String formatted = "国航官方查询失败，以下为本地估算兜底：\n"
+                        + error.getMessage()
+                        + "\n\n"
+                        + ResultFormatter.format(fallback);
+                runOnUiThread(() -> {
+                    statusText.setText("国航官方查询失败，已显示本地估算。");
+                    lastResult = formatted;
+                    resultText.setText(formatted);
+                });
+            }
+        }).start();
     }
 
     private void openOfficialCalculator() {
