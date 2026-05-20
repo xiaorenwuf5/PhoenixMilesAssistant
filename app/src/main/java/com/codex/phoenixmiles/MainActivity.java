@@ -569,27 +569,27 @@ public class MainActivity extends Activity {
             try {
                 OfficialMileageResult officialResult = OfficialMileageClient.query(input, memberGrade);
                 FlightInput resultInput = input;
-                boolean swappedRoute = false;
+                boolean correctedRoute = false;
                 if (!officialResult.success && officialResult.isRouteMismatch()) {
-                    FlightInput swappedInput = swappedRouteInput(input);
-                    if (swappedInput != null) {
-                        OfficialMileageResult swappedResult = OfficialMileageClient.query(swappedInput, memberGrade);
-                        if (swappedResult.success) {
-                            officialResult = swappedResult;
-                            resultInput = swappedInput;
-                            swappedRoute = true;
+                    for (FlightInput candidateInput : routeFallbackInputs(input)) {
+                        OfficialMileageResult candidateResult = OfficialMileageClient.query(candidateInput, memberGrade);
+                        if (candidateResult.success) {
+                            officialResult = candidateResult;
+                            resultInput = candidateInput;
+                            correctedRoute = true;
+                            break;
                         }
                     }
                 }
 
                 FlightInput finalInput = resultInput;
-                boolean finalSwappedRoute = swappedRoute;
+                boolean finalCorrectedRoute = correctedRoute;
                 String formatted = OfficialResultFormatter.format(finalInput, officialResult, memberTierLabel);
-                String status = finalSwappedRoute
+                String status = finalCorrectedRoute
                         ? "已按国航官方结果自动纠正出发/到达机场。"
                         : officialStatusText(officialResult);
                 runOnUiThread(() -> {
-                    if (finalSwappedRoute) {
+                    if (finalCorrectedRoute) {
                         fillFields(finalInput);
                     }
                     statusText.setText(status);
@@ -612,25 +612,87 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private FlightInput swappedRouteInput(FlightInput input) {
+    private List<FlightInput> routeFallbackInputs(FlightInput input) {
+        List<FlightInput> candidates = new ArrayList<>();
+        if (input == null) {
+            return candidates;
+        }
+
+        List<String> originCodes = routeCodesFor(input.originCode);
+        List<String> destinationCodes = routeCodesFor(input.destinationCode);
+        addRouteCandidates(candidates, input, originCodes, destinationCodes);
+        addRouteCandidates(candidates, input, destinationCodes, originCodes);
+        return candidates;
+    }
+
+    private List<String> routeCodesFor(String code) {
+        List<String> codes = new ArrayList<>();
+        if (code == null || code.isEmpty()) {
+            return codes;
+        }
+
+        List<Airport> airports = AirportCatalog.cityAlternativesForCode(code);
+        if (airports.isEmpty()) {
+            codes.add(code);
+            return codes;
+        }
+
+        for (Airport airport : airports) {
+            if (airport != null && !codes.contains(airport.code)) {
+                codes.add(airport.code);
+            }
+        }
+        return codes;
+    }
+
+    private void addRouteCandidates(List<FlightInput> candidates, FlightInput base, List<String> origins, List<String> destinations) {
+        for (String origin : origins) {
+            for (String destination : destinations) {
+                addRouteCandidate(candidates, base, origin, destination);
+            }
+        }
+    }
+
+    private void addRouteCandidate(List<FlightInput> candidates, FlightInput base, String originCode, String destinationCode) {
+        if (base == null
+                || originCode == null
+                || destinationCode == null
+                || originCode.isEmpty()
+                || destinationCode.isEmpty()
+                || originCode.equals(destinationCode)) {
+            return;
+        }
+        if (originCode.equals(base.originCode) && destinationCode.equals(base.destinationCode)) {
+            return;
+        }
+        for (FlightInput candidate : candidates) {
+            if (originCode.equals(candidate.originCode) && destinationCode.equals(candidate.destinationCode)) {
+                return;
+            }
+        }
+
+        candidates.add(routeInput(base, originCode, destinationCode));
+    }
+
+    private FlightInput routeInput(FlightInput input, String originCode, String destinationCode) {
         if (input == null
-                || input.originCode == null
-                || input.destinationCode == null
-                || input.originCode.isEmpty()
-                || input.destinationCode.isEmpty()
-                || input.originCode.equals(input.destinationCode)) {
+                || originCode == null
+                || destinationCode == null
+                || originCode.isEmpty()
+                || destinationCode.isEmpty()
+                || originCode.equals(destinationCode)) {
             return null;
         }
 
-        FlightInput swapped = new FlightInput();
-        swapped.flightNumber = input.flightNumber;
-        swapped.travelDate = input.travelDate;
-        swapped.originCode = input.destinationCode;
-        swapped.destinationCode = input.originCode;
-        swapped.bookingClass = input.bookingClass;
-        swapped.extraNonStatusMiles = input.extraNonStatusMiles;
-        swapped.sourceText = input.sourceText;
-        return swapped;
+        FlightInput candidate = new FlightInput();
+        candidate.flightNumber = input.flightNumber;
+        candidate.travelDate = input.travelDate;
+        candidate.originCode = originCode;
+        candidate.destinationCode = destinationCode;
+        candidate.bookingClass = input.bookingClass;
+        candidate.extraNonStatusMiles = input.extraNonStatusMiles;
+        candidate.sourceText = input.sourceText;
+        return candidate;
     }
 
     private String selectedMemberGradeValue() {

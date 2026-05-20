@@ -38,12 +38,9 @@ final class FlightParser {
 
         input.travelDate = parseDate(value);
 
-        List<Airport> airports = AirportCatalog.findAllIn(value);
-        if (!airports.isEmpty()) {
-            input.originCode = airports.get(0).code;
-        }
-        if (airports.size() > 1) {
-            input.destinationCode = airports.get(1).code;
+        applyAirports(input, AirportCatalog.findAllIn(value));
+        if (input.originCode.isEmpty() || input.destinationCode.isEmpty()) {
+            applyMissingAirports(input, AirportCatalog.findCityDefaultsIn(routeHintText(value, input.flightNumber)));
         }
 
         input.bookingClass = parseCabin(value);
@@ -54,6 +51,69 @@ final class FlightParser {
         }
 
         return input;
+    }
+
+    private static void applyAirports(FlightInput input, List<Airport> airports) {
+        if (!airports.isEmpty()) {
+            input.originCode = airports.get(0).code;
+        }
+        if (airports.size() > 1) {
+            input.destinationCode = airports.get(1).code;
+        }
+    }
+
+    private static void applyMissingAirports(FlightInput input, List<Airport> airports) {
+        for (Airport airport : airports) {
+            if (airport == null) {
+                continue;
+            }
+            if (input.originCode.isEmpty()) {
+                if (!airport.code.equals(input.destinationCode)) {
+                    input.originCode = airport.code;
+                }
+                continue;
+            }
+            if (input.destinationCode.isEmpty() && !input.originCode.equals(airport.code)) {
+                input.destinationCode = airport.code;
+                return;
+            }
+        }
+    }
+
+    private static String routeHintText(String value, String flightNumber) {
+        String[] lines = value.split("\\R");
+        String normalizedFlightNumber = flightNumber == null ? "" : compactOcrText(flightNumber).toUpperCase(Locale.US);
+        String flightDigits = normalizedFlightNumber.startsWith("CA") ? normalizedFlightNumber.substring(2) : normalizedFlightNumber;
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            String compactLine = compactOcrText(lines[i]).toUpperCase(Locale.US);
+            boolean containsFlight = !normalizedFlightNumber.isEmpty() && compactLine.contains(normalizedFlightNumber);
+            boolean containsFlightDigits = !flightDigits.isEmpty() && compactLine.contains("CA" + flightDigits);
+            if (!containsFlight && !containsFlightDigits) {
+                continue;
+            }
+
+            appendRouteLine(builder, lines[i]);
+            if (i + 1 < lines.length) {
+                appendRouteLine(builder, lines[i + 1]);
+            }
+        }
+        if (builder.length() > 0) {
+            return builder.toString();
+        }
+
+        int subjectIndex = value.indexOf("主题");
+        if (subjectIndex >= 0) {
+            return value.substring(subjectIndex, Math.min(value.length(), subjectIndex + 80));
+        }
+        return "";
+    }
+
+    private static void appendRouteLine(StringBuilder builder, String line) {
+        if (builder.length() > 0) {
+            builder.append('\n');
+        }
+        builder.append(line);
     }
 
     private static String parseFlightNumber(String value) {
