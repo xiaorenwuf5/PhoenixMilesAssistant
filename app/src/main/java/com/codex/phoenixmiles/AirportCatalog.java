@@ -371,7 +371,7 @@ final class AirportCatalog {
     static String normalize(String value) {
         return value == null ? "" : value
                 .toUpperCase(Locale.US)
-                .replaceAll("[\s\u00A0\u2007\u202F\u200B\u200C\u200D]+", "")
+                .replaceAll("[\\s\\u00A0\\u2007\\u202F\\u200B\\u200C\\u200D]+", "")
                 .replace("T1", "")
                 .replace("T2", "")
                 .replace("T3", "")
@@ -392,7 +392,7 @@ final class AirportCatalog {
 
     private static void loadAirportData() {
         for (String row : AIRPORT_DATA.split("\n")) {
-            String[] parts = row.split("\|", -1);
+            String[] parts = row.split("\\|", -1);
             if (parts.length != 5) {
                 continue;
             }
