@@ -33,6 +33,9 @@ jobs:
           gradle-version: "9.1.0"
           cache-provider: basic
 
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon
 

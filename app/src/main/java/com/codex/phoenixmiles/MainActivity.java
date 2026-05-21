@@ -15,6 +15,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -148,8 +149,8 @@ public class MainActivity extends Activity {
         flightField = field("航班号，例如 CA4132");
         dateField = field("日期，例如 2026-05-20");
         dateField.setOnClickListener(v -> showDatePicker());
-        originField = field("出发三字码，例如 PEK");
-        destinationField = field("到达三字码，例如 CKG");
+        originField = airportField("出发城市/机场，如 重庆、江北、CKG");
+        destinationField = airportField("到达城市/机场，如 北京、首都、PEK");
         bookingClassField = field("舱位代码，例如 S");
         bookingClassField.setFilters(new InputFilter[]{new InputFilter.AllCaps(), new InputFilter.LengthFilter(1)});
         memberTierSpinner = createMemberTierSpinner();
@@ -163,11 +164,13 @@ public class MainActivity extends Activity {
         dateButton.setOnClickListener(v -> showDatePicker());
         dateRow.addView(dateButton, weightParamsWithMargin(dp(10)));
         form.addView(dateRow);
-        form.addView(label("出发 / 到达"));
-        LinearLayout airportRow = row();
-        airportRow.addView(originField, weightParams());
-        airportRow.addView(destinationField, weightParamsWithMargin(dp(10)));
-        form.addView(airportRow);
+        form.addView(label("出发机场"));
+        form.addView(originField);
+        form.addView(label("到达机场"));
+        form.addView(destinationField);
+        Button swapRouteButton = secondaryButton("互换出发和到达");
+        swapRouteButton.setOnClickListener(v -> swapRouteFields());
+        form.addView(swapRouteButton);
         form.addView(label("舱位"));
         form.addView(bookingClassField);
         form.addView(label("会员级别"));
@@ -204,6 +207,7 @@ public class MainActivity extends Activity {
         root.addView(rawLabel);
 
         rawTextField = field("OCR 原文会显示在这里，也可以直接粘贴阿里商旅页面文字。");
+        rawTextField.setSingleLine(false);
         rawTextField.setMinLines(5);
         rawTextField.setMaxLines(12);
         rawTextField.setGravity(Gravity.TOP | Gravity.START);
@@ -499,10 +503,10 @@ public class MainActivity extends Activity {
                 missing.append("日期（点选择日期） ");
             }
             if (parsed.originCode.isEmpty()) {
-                missing.append("出发 ");
+                missing.append("出发机场 ");
             }
             if (parsed.destinationCode.isEmpty()) {
-                missing.append("到达 ");
+                missing.append("到达机场 ");
             }
             if (parsed.bookingClass.isEmpty()) {
                 missing.append("舱位 ");
@@ -519,10 +523,10 @@ public class MainActivity extends Activity {
             dateField.setText(input.dateText());
         }
         if (input.originCode != null && !input.originCode.isEmpty()) {
-            originField.setText(input.originCode);
+            setAirportFieldText(originField, input.originCode);
         }
         if (input.destinationCode != null && !input.destinationCode.isEmpty()) {
-            destinationField.setText(input.destinationCode);
+            setAirportFieldText(destinationField, input.destinationCode);
         }
         if (input.bookingClass != null && !input.bookingClass.isEmpty()) {
             bookingClassField.setText(input.bookingClass);
@@ -541,18 +545,49 @@ public class MainActivity extends Activity {
         FlightInput input = new FlightInput();
         input.flightNumber = value(flightField).toUpperCase(Locale.US).replace(" ", "");
         input.travelDate = parseDate(value(dateField));
-        input.originCode = value(originField).toUpperCase(Locale.US);
-        input.destinationCode = value(destinationField).toUpperCase(Locale.US);
+        String originText = value(originField);
+        String destinationText = value(destinationField);
+        input.originCode = AirportCatalog.codeFromUserInput(originText);
+        input.destinationCode = AirportCatalog.codeFromUserInput(destinationText);
         input.bookingClass = value(bookingClassField).toUpperCase(Locale.US);
         input.sourceText = rawTextField.getText().toString();
         FlightInput parsed = FlightParser.parse(input.sourceText);
         input.extraNonStatusMiles = parsed.extraNonStatusMiles;
+        if (input.flightNumber.isEmpty()) {
+            statusText.setText("请先输入或识别航班号。");
+            flightField.requestFocus();
+            return;
+        }
         if (input.travelDate == null) {
             statusText.setText("请先选择乘机日期。");
             showDatePicker();
             return;
         }
+        if (input.originCode.isEmpty()) {
+            statusText.setText(originText.isEmpty()
+                    ? "请先输入或选择出发机场。"
+                    : "无法识别出发机场，请输入城市、机场名或三字码，或从下拉列表选择。");
+            originField.requestFocus();
+            return;
+        }
+        if (input.destinationCode.isEmpty()) {
+            statusText.setText(destinationText.isEmpty()
+                    ? "请先输入或选择到达机场。"
+                    : "无法识别到达机场，请输入城市、机场名或三字码，或从下拉列表选择。");
+            destinationField.requestFocus();
+            return;
+        }
+        if (input.bookingClass.isEmpty()) {
+            statusText.setText("请先输入或识别舱位代码。");
+            bookingClassField.requestFocus();
+            return;
+        }
         queryOfficial(input);
+    }
+
+    private void setAirportFieldText(EditText field, String code) {
+        Airport airport = AirportCatalog.byCode(code);
+        field.setText(airport == null ? code : airport.displayName());
     }
 
     private void showResult(MileageResult result) {
@@ -570,7 +605,7 @@ public class MainActivity extends Activity {
                 OfficialMileageResult officialResult = OfficialMileageClient.query(input, memberGrade);
                 FlightInput resultInput = input;
                 boolean correctedRoute = false;
-                if (!officialResult.success && officialResult.isRouteMismatch()) {
+                if (!officialResult.success && shouldTryRouteFallback(officialResult)) {
                     for (FlightInput candidateInput : routeFallbackInputs(input)) {
                         OfficialMileageResult candidateResult = OfficialMileageClient.query(candidateInput, memberGrade);
                         if (candidateResult.success) {
@@ -610,6 +645,14 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private boolean shouldTryRouteFallback(OfficialMileageResult result) {
+        if (result == null) {
+            return false;
+        }
+        return result.isRouteMismatch()
+                || (result.message != null && result.message.contains("未查询到该航班"));
     }
 
     private List<FlightInput> routeFallbackInputs(FlightInput input) {
@@ -720,6 +763,12 @@ public class MainActivity extends Activity {
         if (result.isRouteMismatch()) {
             return "航班号和出发/到达机场不匹配，请核对截图。";
         }
+        if (result.message != null && result.message.contains("未查询到该航班")) {
+            return "国航官方未查到该航班，请核对航班号、日期、出发/到达机场和舱位。";
+        }
+        if (result.message != null && !result.message.trim().isEmpty()) {
+            return "国航官方提示：" + result.message + "。请核对字段。";
+        }
         return "国航官方返回提示，请核对字段。";
     }
 
@@ -769,6 +818,12 @@ public class MainActivity extends Activity {
         parseAndFill(sample);
     }
 
+    private void swapRouteFields() {
+        String origin = value(originField);
+        originField.setText(value(destinationField));
+        destinationField.setText(origin);
+    }
+
     private LocalDate parseDate(String value) {
         FlightInput parsed = FlightParser.parse(value == null ? "" : value);
         return parsed.travelDate;
@@ -799,14 +854,32 @@ public class MainActivity extends Activity {
 
     private EditText field(String hint) {
         EditText editText = new EditText(this);
+        styleField(editText, hint);
+        return editText;
+    }
+
+    private AutoCompleteTextView airportField(String hint) {
+        AutoCompleteTextView editText = new AutoCompleteTextView(this);
+        styleField(editText, hint);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_dropdown_item_1line,
+                AirportCatalog.airportOptions()
+        );
+        editText.setAdapter(adapter);
+        editText.setThreshold(1);
+        editText.setOnClickListener(v -> editText.showDropDown());
+        return editText;
+    }
+
+    private void styleField(EditText editText, String hint) {
         editText.setTextSize(16);
-        editText.setSingleLine(false);
+        editText.setSingleLine(true);
         editText.setHint(hint);
         editText.setTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_primary));
         editText.setHintTextColor(getColorCompat(com.codex.phoenixmiles.R.color.text_secondary));
         editText.setBackgroundResource(com.codex.phoenixmiles.R.drawable.edit_text_background);
         editText.setPadding(dp(12), dp(8), dp(12), dp(8));
-        return editText;
     }
 
     private Spinner createMemberTierSpinner() {

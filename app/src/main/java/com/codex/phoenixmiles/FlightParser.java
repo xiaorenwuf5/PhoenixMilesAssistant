@@ -22,6 +22,7 @@ final class FlightParser {
     private static final Pattern CABIN_PAREN_PATTERN = Pattern.compile("(经济舱|超级经济舱|公务舱|头等舱|舱等)?\\s*[（(]\\s*([A-Z])\\s*[0-9OIL]?\\s*[）)]", Pattern.CASE_INSENSITIVE);
     private static final Pattern CABIN_TEXT_PATTERN = Pattern.compile("舱等\\s*[:：]?\\s*([A-Z])|([A-Z])\\s*舱", Pattern.CASE_INSENSITIVE);
     private static final Pattern EXTRA_MILE_PATTERN = Pattern.compile("额外\\s*([0-9]{2,5})\\s*里程");
+    private static final Pattern ROUTE_TIME_PATTERN = Pattern.compile("(?<![0-9])(?:[01]?\\d|2[0-3])\\s*[:：]\\s*[0-5]\\d(?![0-9])");
     private static final String[] FLIGHT_SCORE_KEYWORDS = {
             "中国国航", "国航", "航班号", "航班", "CA", "波音", "机型", "承运", "航空公司"
     };
@@ -38,9 +39,16 @@ final class FlightParser {
 
         input.travelDate = parseDate(value);
 
-        applyAirports(input, AirportCatalog.findAllIn(value));
+        String routeHint = routeHintText(value, input.flightNumber);
+        applyAirports(input, routeAirports(value));
         if (input.originCode.isEmpty() || input.destinationCode.isEmpty()) {
-            applyMissingAirports(input, AirportCatalog.findCityDefaultsIn(routeHintText(value, input.flightNumber)));
+            applyMissingAirports(input, AirportCatalog.findAllIn(routeHint));
+        }
+        if (input.originCode.isEmpty() || input.destinationCode.isEmpty()) {
+            applyMissingAirports(input, AirportCatalog.findCityDefaultsIn(routeHint));
+        }
+        if (input.originCode.isEmpty() || input.destinationCode.isEmpty()) {
+            applyMissingAirports(input, AirportCatalog.findAllIn(value));
         }
 
         input.bookingClass = parseCabin(value);
@@ -78,6 +86,53 @@ final class FlightParser {
                 return;
             }
         }
+    }
+
+    private static List<Airport> routeAirports(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String[] lines = value.split("\\R");
+        List<Airport> result = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            addRouteAirportsFromLine(result, lines, i);
+        }
+        return result;
+    }
+
+    private static void addRouteAirportsFromLine(List<Airport> result, String[] lines, int index) {
+        String line = lines[index];
+        StringBuilder candidate = new StringBuilder(line);
+        if (ROUTE_TIME_PATTERN.matcher(line).find() && index + 1 < lines.length) {
+            candidate.append('\n').append(lines[index + 1]);
+        } else if (index > 0 && ROUTE_TIME_PATTERN.matcher(lines[index - 1]).find()) {
+            candidate.insert(0, lines[index - 1] + "\n");
+        }
+
+        if (!ROUTE_TIME_PATTERN.matcher(candidate).find()) {
+            return;
+        }
+
+        List<Airport> airports = AirportCatalog.findAllIn(candidate.toString());
+        if (airports.isEmpty()) {
+            airports = AirportCatalog.findAirportNamesIn(candidate.toString());
+        }
+        for (Airport airport : airports) {
+            addUniqueAirport(result, airport);
+        }
+    }
+
+    private static void addUniqueAirport(List<Airport> airports, Airport airport) {
+        if (airport == null) {
+            return;
+        }
+        for (Airport item : airports) {
+            if (item.code.equals(airport.code)) {
+                return;
+            }
+        }
+        airports.add(airport);
     }
 
     private static String routeHintText(String value, String flightNumber) {

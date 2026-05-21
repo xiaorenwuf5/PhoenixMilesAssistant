@@ -12,6 +12,7 @@ final class AirportCatalog {
     private static final Map<String, String> ALIASES = new HashMap<>();
     private static final Map<String, String> CITY_DEFAULTS = new HashMap<>();
     private static final Map<String, List<Airport>> CITY_AIRPORTS = new HashMap<>();
+    private static final Map<String, String> AIRPORT_NAME_DEFAULTS = new HashMap<>();
     private static final String AIRPORT_DATA =
             "PEK|北京|首都|40.077349|116.596702\n" +
             "PKX|北京|大兴|39.501289|116.413967\n" +
@@ -295,7 +296,9 @@ final class AirportCatalog {
             int from = 0;
             int index;
             while ((index = normalized.indexOf(alias, from)) >= 0) {
-                hits.add(new Hit(index, alias.length(), AIRPORTS.get(entry.getValue())));
+                if (shouldUseAliasHit(normalized, index, alias, entry.getValue())) {
+                    hits.add(new Hit(index, alias.length(), AIRPORTS.get(entry.getValue())));
+                }
                 from = index + alias.length();
             }
         }
@@ -309,7 +312,8 @@ final class AirportCatalog {
         });
 
         List<Airport> result = new ArrayList<>();
-        for (Hit hit : hits) {
+        List<Hit> selectedHits = selectNonOverlappingHits(hits);
+        for (Hit hit : selectedHits) {
             if (hit.airport == null || containsCode(result, hit.airport.code)) {
                 continue;
             }
@@ -354,6 +358,99 @@ final class AirportCatalog {
             result.add(hit.airport);
         }
         return result;
+    }
+
+    static List<Airport> findAirportNamesIn(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String normalized = normalize(text);
+        List<Hit> hits = new ArrayList<>();
+        for (Map.Entry<String, String> entry : AIRPORT_NAME_DEFAULTS.entrySet()) {
+            String name = entry.getKey();
+            String airportCode = entry.getValue();
+            if (name.isEmpty() || airportCode == null || airportCode.isEmpty()) {
+                continue;
+            }
+
+            int from = 0;
+            int index;
+            while ((index = normalized.indexOf(name, from)) >= 0) {
+                hits.add(new Hit(index, name.length(), AIRPORTS.get(airportCode)));
+                from = index + name.length();
+            }
+        }
+
+        Collections.sort(hits, (left, right) -> {
+            if (left.index != right.index) {
+                return Integer.compare(left.index, right.index);
+            }
+            return Integer.compare(right.length, left.length);
+        });
+
+        List<Airport> result = new ArrayList<>();
+        for (Hit hit : selectNonOverlappingHits(hits)) {
+            if (hit.airport == null || containsCode(result, hit.airport.code)) {
+                continue;
+            }
+            result.add(hit.airport);
+        }
+        return result;
+    }
+
+    static String codeFromUserInput(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return "";
+        }
+
+        String embeddedCode = embeddedAirportCode(text);
+        if (!embeddedCode.isEmpty()) {
+            return embeddedCode;
+        }
+
+        String normalized = normalize(text);
+        Airport direct = byCode(normalized);
+        if (direct != null) {
+            return direct.code;
+        }
+
+        String airportByName = AIRPORT_NAME_DEFAULTS.get(normalized);
+        if (airportByName != null && !airportByName.isEmpty()) {
+            return airportByName;
+        }
+
+        List<Airport> airports = findAllIn(text);
+        if (!airports.isEmpty()) {
+            return airports.get(0).code;
+        }
+
+        List<Airport> cityDefaults = findCityDefaultsIn(text);
+        if (!cityDefaults.isEmpty()) {
+            return cityDefaults.get(0).code;
+        }
+        return "";
+    }
+
+    static List<String> airportOptions() {
+        List<Airport> airports = new ArrayList<>(AIRPORTS.values());
+        Collections.sort(airports, (left, right) -> {
+            int city = left.city.compareTo(right.city);
+            if (city != 0) {
+                return city;
+            }
+            int name = left.name.compareTo(right.name);
+            if (name != 0) {
+                return name;
+            }
+            return left.code.compareTo(right.code);
+        });
+
+        List<String> options = new ArrayList<>();
+        for (Airport airport : airports) {
+            options.add(airport.displayName());
+        }
+        return options;
     }
 
     static List<Airport> cityAlternativesForCode(String code) {
@@ -439,6 +536,7 @@ final class AirportCatalog {
         }
         addCityDefault(airport.city, airport.code);
         addCityAirport(airport);
+        addAirportNameDefault(airport.name, airport.code);
         for (String alias : aliases) {
             ALIASES.put(normalize(alias), airport.code);
         }
@@ -475,6 +573,18 @@ final class AirportCatalog {
         }
     }
 
+    private static void addAirportNameDefault(String airportName, String airportCode) {
+        String normalizedName = normalize(airportName);
+        if (normalizedName.isEmpty() || !AIRPORTS.containsKey(airportCode)) {
+            return;
+        }
+        if (AIRPORT_NAME_DEFAULTS.containsKey(normalizedName)) {
+            AIRPORT_NAME_DEFAULTS.put(normalizedName, "");
+            return;
+        }
+        AIRPORT_NAME_DEFAULTS.put(normalizedName, airportCode);
+    }
+
     private static boolean containsCode(List<Airport> airports, String code) {
         for (Airport airport : airports) {
             if (airport.code.equals(code)) {
@@ -482,6 +592,72 @@ final class AirportCatalog {
             }
         }
         return false;
+    }
+
+    private static boolean shouldUseAliasHit(String normalized, int index, String alias, String airportCode) {
+        if (alias == null || alias.isEmpty() || airportCode == null) {
+            return false;
+        }
+        if (alias.equals(airportCode)) {
+            return isDelimitedLatinCode(normalized, index, alias.length());
+        }
+        return alias.length() >= 3;
+    }
+
+    private static boolean isDelimitedLatinCode(String value, int index, int length) {
+        int before = index - 1;
+        int after = index + length;
+        return (before < 0 || !isAsciiLetterOrDigit(value.charAt(before)))
+                && (after >= value.length() || !isAsciiLetterOrDigit(value.charAt(after)));
+    }
+
+    private static boolean isAsciiLetterOrDigit(char value) {
+        return (value >= 'A' && value <= 'Z')
+                || (value >= 'a' && value <= 'z')
+                || (value >= '0' && value <= '9');
+    }
+
+    private static List<Hit> selectNonOverlappingHits(List<Hit> hits) {
+        List<Hit> selected = new ArrayList<>();
+        for (Hit hit : hits) {
+            if (hit.airport == null || overlapsSelectedHit(selected, hit)) {
+                continue;
+            }
+            selected.add(hit);
+        }
+        return selected;
+    }
+
+    private static boolean overlapsSelectedHit(List<Hit> selected, Hit hit) {
+        int hitEnd = hit.index + hit.length;
+        for (Hit selectedHit : selected) {
+            int selectedEnd = selectedHit.index + selectedHit.length;
+            if (hit.index < selectedEnd && selectedHit.index < hitEnd) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String embeddedAirportCode(String text) {
+        String upper = text.toUpperCase(Locale.US);
+        for (int i = 0; i <= upper.length() - 3; i++) {
+            char first = upper.charAt(i);
+            char second = upper.charAt(i + 1);
+            char third = upper.charAt(i + 2);
+            if (!isAsciiUpper(first) || !isAsciiUpper(second) || !isAsciiUpper(third)) {
+                continue;
+            }
+            String code = upper.substring(i, i + 3);
+            if (byCode(code) != null && isDelimitedLatinCode(upper, i, 3)) {
+                return code;
+            }
+        }
+        return "";
+    }
+
+    private static boolean isAsciiUpper(char value) {
+        return value >= 'A' && value <= 'Z';
     }
 
     private static void addFuzzyHits(String normalized, List<Hit> hits) {
